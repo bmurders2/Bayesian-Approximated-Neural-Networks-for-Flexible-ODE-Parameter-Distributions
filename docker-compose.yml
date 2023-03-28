@@ -1,0 +1,20 @@
+version: "3.8"
+
+services:
+  project_container:
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    container_name: bayesian_approximated_nn_example_container
+    image: bayesian_approximated_nn_example
+    env_file:
+      - env_file.env
+    # keep port only open on local machine
+    # ports:
+    #   - "127.0.0.1:8888:8888"
+    volumes:
+      - ./code:/project_code/app
+    working_dir: /project_code/app
+    tty: true
+    stdin_open: true
+    # command: jupyter notebook --ip 0.0.0.0 --no-browser

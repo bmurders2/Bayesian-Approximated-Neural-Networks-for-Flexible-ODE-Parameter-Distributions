@@ -31,6 +31,7 @@ Note:
         without continued training if needed. 
 
 '''
+#%%
 # imports
 import os
 import numpy as np
@@ -40,8 +41,8 @@ import pickle
 from jax.experimental import ode as jax_ode_solver
 from jax import numpy as jnp
 from jax import random, jit, grad, vmap
-from jax.experimental import stax, optimizers
-from jax.experimental.stax import Conv, Dense, Dropout, MaxPool, Relu, Flatten, LogSoftmax, elementwise
+from jax.example_libraries import stax, optimizers
+from jax.example_libraries.stax import Conv, Dense, Dropout, MaxPool, Relu, Flatten, LogSoftmax, elementwise
 from jax.interpreters.batching import batch
 
 import seaborn as sns
@@ -51,15 +52,10 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import matplotlib.ticker as mtick
 
-
-
 from jax.config import config
-config.update("jax_enable_x64", True)
 
-random_seed_int = 0
-rng = random.PRNGKey(random_seed_int)
-np.random.seed(random_seed_int)
 
+#%%
 # functions
 # activation functions
 @jit
@@ -401,129 +397,133 @@ def plot_samples(t_eval, actual_data_df, pred_df, pred_sample_col_list):
     plt.show()
 
 
-if __name__ == "__main__":
-    # start of script
-
 #%%
-    # initial/config data for script
-    key, subkey = random.split(rng)
-    py_file_path = os.path.dirname(os.path.abspath(__file__))
-    jax_model_weights_file_name = 'model_weights_jax.pkl'
-    jax_apply_fun_file_name = 'model_apply_fun_jax.pkl'
-    initial_guess = jnp.array([25.,0.1])
-    jnp.set_printoptions(suppress=True)
+# main script
+# initial/config data for script
+config.update("jax_enable_x64", True)
+
+random_seed_int = 0
+rng = random.PRNGKey(random_seed_int)
+np.random.seed(random_seed_int)
+
+key, subkey = random.split(rng)
+py_file_path = os.path.dirname(os.path.abspath(__file__))
+jax_model_weights_file_name = 'model_weights_jax.pkl'
+jax_apply_fun_file_name = 'model_apply_fun_jax.pkl'
+initial_guess = jnp.array([25.,0.1])
+jnp.set_printoptions(suppress=True)
 
 
-    # nn params for target ode function's parameters (count)
-    param_count = 2
-    # nn inputs should be fixed given the context of use for the neural network
-    nn_inputs = jnp.ones((2,param_count)) * 1e-7
-    nn_dropout_value = 0.1
-    nn_units_per_layer = 2048
-    primer_step_size = 2e-3
-    traing_step_size = 2e-5
-    primer_train_iter = 50000
-    train_iter = 5000
-    sample_count = 200
+# nn params for target ode function's parameters (count)
+param_count = 2
+# nn inputs should be fixed given the context of use for the neural network
+nn_inputs = jnp.ones((2,param_count)) * 1e-7
+nn_dropout_value = 0.1
+nn_units_per_layer = 2048
+primer_step_size = 2e-3
+traing_step_size = 2e-5
+primer_train_iter = 50000
+train_iter = 5000
+sample_count = 200
 
 
-    # train and actual data params
-    true_func_initial_Y0 = jnp.array([27.3])
-    true_func_params = jnp.array([0.041])
+# train and actual data params
+true_func_initial_Y0 = jnp.array([27.3])
+true_func_params = jnp.array([0.041])
 
-    training_delta_modifier = 1.1
-    add_training_noise_func_params = {'offset': training_delta_modifier, 'scale': training_delta_modifier}
-    training_size_ratio = 0.2
-    max_training_range_t = 75
-    min_training_range_t = 0
-    training_element_cnt_t = int(max_training_range_t * training_size_ratio)
+training_delta_modifier = 1.1
+add_training_noise_func_params = {'offset': training_delta_modifier, 'scale': training_delta_modifier}
+training_size_ratio = 0.2
+max_training_range_t = 75
+min_training_range_t = 0
+training_element_cnt_t = int(max_training_range_t * training_size_ratio)
 
-    actual_t = jnp.arange(min_training_range_t, max_training_range_t + 1).astype(jnp.float64)
+actual_t = jnp.arange(min_training_range_t, max_training_range_t + 1).astype(jnp.float64)
 
-    # batch shape:= (t, y)
-    actual_data_batch = generate_data_batch(true_func_initial_Y0, actual_t, true_func_params, diff_eq)
-    training_data_batch = slice_actual_data_batch(actual_data_batch, training_element_cnt_t, add_noise_func=add_noise, add_noise_params=add_training_noise_func_params)
-    # create pandas dataframes of training and actual data
-    actual_data_df, train_data_df = [pd.DataFrame({'t': t_,'y': y_}) for t_,y_ in [actual_data_batch, training_data_batch]]
+# batch shape:= (t, y)
+actual_data_batch = generate_data_batch(true_func_initial_Y0, actual_t, true_func_params, diff_eq)
+training_data_batch = slice_actual_data_batch(actual_data_batch, training_element_cnt_t, add_noise_func=add_noise, add_noise_params=add_training_noise_func_params)
+# create pandas dataframes of training and actual data
+actual_data_df, train_data_df = [pd.DataFrame({'t': t_,'y': y_}) for t_,y_ in [actual_data_batch, training_data_batch]]
 
-
-
-#%%
-    # define nn model and params
-    init_fun, apply_fun = stax.serial(
-        Dense(nn_units_per_layer), elementwise(mish), Dropout(nn_dropout_value),
-        Dense(param_count), elementwise(elu,**{'offset':1.})
-    )
-
-    in_shape = ((1,param_count))
-    out_shape, net_params = init_fun(rng, in_shape)
-    
-
-#%%
-    # prime params for actual training
-    primer_batch = jnp.array([jnp.arange(0,len(initial_guess)),initial_guess])
-    opt_init, opt_update, get_params = optimizers.adamax(step_size=primer_step_size)
-    opt_state = opt_init(net_params)
-    prime_params_func_params = {
-        'initial_guess': initial_guess,
-        'batch': primer_batch,
-        'net_params': net_params,
-        'train_iter': primer_train_iter,
-        'nn_inputs': nn_inputs,
-        'key': key
-    }
-    net_params, key = prime_params(**prime_params_func_params)
-
-#%%
-    # train/optimize params
-    opt_init, opt_update, get_params = optimizers.adamax(step_size=traing_step_size)
-    opt_state = opt_init(net_params)
-    train_params_func_params = {
-        'batch': training_data_batch,
-        'net_params': net_params,
-        'opt_state': opt_state,
-        'train_iter': train_iter,
-        'nn_inputs': nn_inputs,
-        'key': key
-    }
-    net_params, key = train_params(**train_params_func_params)
-    opt_state = opt_init(net_params)
-    
-    
-
-#%%
-    # get model samples
-    thetas, theta_list, pred_list = sample_model(opt_state, sample_count, actual_data_df['t'].to_numpy(), nn_inputs, key)
-
-#%%
-    # organize distribution data and archive
-    theta_df, pred_df, pred_df_density, pred_sample_col_list = convert_samples_to_dataframe(thetas, pred_list, param_count, sample_count, py_file_path)
-
-#%%
-    # save weight data via pickle
-    print('Savings Weights | Filename: {file_name}'.format(file_name=jax_model_weights_file_name))
-    trained_params = optimizers.unpack_optimizer_state(opt_state)
-    pickle.dump(trained_params, open(os.path.join(py_file_path, jax_model_weights_file_name), "wb"))
-    # load from saved weight data files
-    trained_params = pickle.load(open(os.path.join(py_file_path, jax_model_weights_file_name), "rb"))
-    trained_opt_state = optimizers.pack_optimizer_state(trained_params)
 
 
 #%%
-    # plot 1 - main density plot
-    main_density_plot(actual_data_df['t'].to_numpy(), sample_count, pred_df, actual_data_df, train_data_df, pred_df_density)
+# define nn model and params
+init_fun, apply_fun = stax.serial(
+    Dense(nn_units_per_layer), elementwise(mish), Dropout(nn_dropout_value),
+    Dense(param_count), elementwise(elu,**{'offset':1.})
+)
+
+in_shape = ((1,param_count))
+out_shape, net_params = init_fun(rng, in_shape)
+
 
 #%%
-    # plot ode parameter distributions
-    for theta_col in range(param_count):
-        xlabel = 'f(0)' if theta_col == 0 else 'Growth Rate' if theta_col == 1 else None
-        plot_theta_density(theta_df,theta_col,xlabel)
+# prime params for actual training
+primer_batch = jnp.array([jnp.arange(0,len(initial_guess)),initial_guess])
+opt_init, opt_update, get_params = optimizers.adamax(step_size=primer_step_size)
+opt_state = opt_init(net_params)
+prime_params_func_params = {
+    'initial_guess': initial_guess,
+    'batch': primer_batch,
+    'net_params': net_params,
+    'train_iter': primer_train_iter,
+    'nn_inputs': nn_inputs,
+    'key': key
+}
+net_params, key = prime_params(**prime_params_func_params)
 
 #%%
-    # plot contour
-    plot_contour(actual_data_df['t'].to_numpy(), actual_data_df, pred_df, pred_df_density, sample_count)
+# train/optimize params
+opt_init, opt_update, get_params = optimizers.adamax(step_size=traing_step_size)
+opt_state = opt_init(net_params)
+train_params_func_params = {
+    'batch': training_data_batch,
+    'net_params': net_params,
+    'opt_state': opt_state,
+    'train_iter': train_iter,
+    'nn_inputs': nn_inputs,
+    'key': key
+}
+net_params, key = train_params(**train_params_func_params)
+opt_state = opt_init(net_params)
+
+
+
 #%%
-    # plot individual samples
-    plot_samples(actual_data_df['t'].to_numpy(), actual_data_df, pred_df, pred_sample_col_list)
+# get model samples
+thetas, theta_list, pred_list = sample_model(opt_state, sample_count, actual_data_df['t'].to_numpy(), nn_inputs, key)
+
+#%%
+# organize distribution data and archive
+theta_df, pred_df, pred_df_density, pred_sample_col_list = convert_samples_to_dataframe(thetas, pred_list, param_count, sample_count, py_file_path)
+
+#%%
+# save weight data via pickle
+print('Savings Weights | Filename: {file_name}'.format(file_name=jax_model_weights_file_name))
+trained_params = optimizers.unpack_optimizer_state(opt_state)
+pickle.dump(trained_params, open(os.path.join(py_file_path, jax_model_weights_file_name), "wb"))
+# load from saved weight data files
+trained_params = pickle.load(open(os.path.join(py_file_path, jax_model_weights_file_name), "rb"))
+trained_opt_state = optimizers.pack_optimizer_state(trained_params)
+
+
+#%%
+# plot 1 - main density plot
+main_density_plot(actual_data_df['t'].to_numpy(), sample_count, pred_df, actual_data_df, train_data_df, pred_df_density)
+
+#%%
+# plot ode parameter distributions
+for theta_col in range(param_count):
+    xlabel = 'f(0)' if theta_col == 0 else 'Growth Rate' if theta_col == 1 else None
+    plot_theta_density(theta_df,theta_col,xlabel)
+
+#%%
+# plot contour
+plot_contour(actual_data_df['t'].to_numpy(), actual_data_df, pred_df, pred_df_density, sample_count)
+#%%
+# plot individual samples
+plot_samples(actual_data_df['t'].to_numpy(), actual_data_df, pred_df, pred_sample_col_list)
 
 # %% - end of script

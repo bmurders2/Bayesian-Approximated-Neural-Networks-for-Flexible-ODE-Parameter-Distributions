@@ -1,0 +1,7 @@
+numpy
+pandas
+matplotlib
+seaborn
+jax[cpu]
+jaxlib
+jupyter

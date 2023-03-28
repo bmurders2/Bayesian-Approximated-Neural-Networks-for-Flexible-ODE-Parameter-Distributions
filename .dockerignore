@@ -1,0 +1,7 @@
+**/.git
+**/.cache
+**/.vscode
+**/__pycache__
+**/venv
+
+**/*.env
